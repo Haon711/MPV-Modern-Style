@@ -550,6 +550,65 @@ function prepare_elements()
     end
 end
 
+
+--
+-- Thumbfast integration
+--
+
+local thumbfast = {
+    width = 0,
+    height = 0,
+    disabled = true,
+    available = false
+}
+
+local thumbfast_visible = false
+
+function thumbfast_clear()
+    if thumbfast.available and thumbfast_visible then
+        mp.commandv("script-message-to", "thumbfast", "clear")
+    end
+    thumbfast_visible = false
+end
+
+function thumbfast_request(element, sliderpos)
+    if thumbfast.disabled or not thumbfast.available then
+        return
+    end
+
+    local duration = mp.get_property_number("duration", nil)
+    if not duration or duration <= 0 or not sliderpos then
+        thumbfast_clear()
+        return
+    end
+
+    local hovered_seconds = duration * (sliderpos / 100)
+    local cursor_x, cursor_y = mp.get_mouse_pos()
+    local display_width, display_height = mp.get_osd_size()
+
+    if not cursor_x or not cursor_y or not display_width or not display_height then
+        thumbfast_clear()
+        return
+    end
+
+    local margin_left = 10
+    local margin_right = 10
+    local margin_top = 10
+
+    local x = math.min(
+        display_width - thumbfast.width - margin_right,
+        math.max(margin_left, cursor_x - thumbfast.width / 2)
+    )
+
+    local y = cursor_y - 10 - thumbfast.height
+    if y < margin_top then
+        y = cursor_y + 25
+    end
+
+    mp.commandv("script-message-to", "thumbfast", "thumb", hovered_seconds, x, y)
+    thumbfast_visible = true
+end
+
 --
 -- Element Rendering
 --
@@ -624,6 +683,9 @@ function render_elements(master_ass)
             if not (element.slider.tooltipF == nil) then
                 if mouse_hit(element) then
                     local sliderpos = get_slider_value(element)
+                    if element.name == 'seekbar' then
+                        thumbfast_request(element, sliderpos)
+                    end
                     local tooltiplabel = element.slider.tooltipF(sliderpos)
                     local an = slider_lo.tooltip_an
                     local ty
@@ -658,6 +720,10 @@ function render_elements(master_ass)
                     ass_append_alpha(elem_ass, slider_lo.alpha, 0)
                     elem_ass:append(tooltiplabel)
                 end
+            end
+
+            if element.name == 'seekbar' and not mouse_hit(element) then
+                thumbfast_clear()
             end
 
         elseif (element.type == 'button') then
@@ -846,6 +912,7 @@ end
 
 function new_element(name, type)
     elements[name] = {}
+    elements[name].name = name
     elements[name].type = type
 
     -- add default stuff
@@ -1670,6 +1737,7 @@ function request_tick()
 end
 
 function mouse_leave()
+    thumbfast_clear()
     if get_hidetimeout() >= 0 then
         hide_osc()
     end
@@ -2054,6 +2122,17 @@ mp.register_script_message('osc-tracklist', function(dur)
     end
     show_message(table.concat(msg, '\n\n'), dur)
 end)
+
+mp.register_script_message("thumbfast-info", function(json)
+    local data = utils.parse_json(json)
+    if type(data) ~= "table" or not data.width or not data.height then
+        msg.error("thumbfast-info: invalid thumbnail information")
+    else
+        thumbfast = data
+    end
+end)
+
+mp.register_event("end-file", thumbfast_clear)
 
 mp.observe_property('fullscreen', 'bool',
     function(name, val)
